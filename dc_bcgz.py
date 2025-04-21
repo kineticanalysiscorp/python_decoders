@@ -1,122 +1,270 @@
-import datetime
+import sys
 import os
+from datetime import datetime
+from typing import List, Dict, Tuple, Optional
 
-def julian_day(month, day, year, hour):
-    """Calculate Julian Day."""
-    dt = datetime.datetime(year, month, day, hour)
-    return dt.toordinal() + 1721424.5
+class TrackPoint:
+    def __init__(self):
+        self.tau = 0
+        self.lat = -999.0
+        self.lon = -999.0
+        self.vmax = 0
+        self.mslp = 0
+        self.mrd = 0
+        self.ty = '  '
 
-def match_atcf_id(lat, lon, year, month, day, hour, atcfid):
-    """Stub for matching ATCF ID."""
-    # Dummy implementation for the sake of translation
-    return True
+class Forecast:
+    def __init__(self):
+        self.basin = ''
+        self.cyNum = 0
+        self.DTG = ''
+        self.jdnow = 0.0
+        self.technum = 0
+        self.tech = ''
+        self.stormname = ''
+        self.track = [TrackPoint() for _ in range(36)]  # Initialize 36 track points
 
-def read_atcf_records(atfile, mode):
-    """Stub to read ATCF records."""
-    pass
+class ATCFProcessor:
+    def __init__(self):
+        self.num_fcst = 0
+        self.fcst = []
+        self.num_carq = 0
+        self.carq = []
 
-def sort_carq_records():
-    """Stub to sort CARQ records."""
-    pass
+    def clear_internal_atcf(self):
+        self.num_fcst = 0
+        self.fcst = []
+        self.num_carq = 0
+        self.carq = []
 
-def sort_fcst_records():
-    """Stub to sort forecast records."""
-    pass
+    def djuliana(self, mm: int, dd: int, yy: int, hh: float) -> float:
+        """Convert date to Julian day (simplified version)"""
+        # Note: This is a simplified version. For precise calculations, use a proper Julian date function
+        return float(datetime(yy, mm, dd).toordinal()) + hh / 24.0
 
-def write_carq_record(index):
-    """Stub to write CARQ record."""
-    pass
+    def match_atcf_id(self, fix_lat: float, fix_lon: float, yy: int, mm: int, dd: int, hh: int, atcfid: str, found: bool):
+        """Match ATCF ID (simplified version)"""
+        # In the original Fortran, this would match against existing ATCF records
+        # Here we just pass through the atcfid
+        pass
 
-def write_fcst_record(index):
-    """Stub to write forecast record."""
-    pass
+    def get_atcf_records(self, atfile: str, tech: str):
+        """Load ATCF records from file (simplified version)"""
+        # In a full implementation, this would parse the ATCF file
+        pass
 
-def date_and_time():
-    """Return the current date and time as a dictionary."""
-    now = datetime.datetime.now()
-    return {
-        "year": now.year,
-        "month": now.month,
-        "day": now.day,
-        "hour": now.hour,
-        "minute": now.minute,
-        "second": now.second
-    }
+    def sort_carq_records(self):
+        """Sort CARQ records (placeholder)"""
+        pass
+
+    def write_carq_record(self, index: int):
+        """Write CARQ record (placeholder)"""
+        pass
+
+    def sort_fcst_records(self):
+        """Sort forecast records (placeholder)"""
+        pass
+
+    def write_fcst_record(self, index: int):
+        """Write forecast record (placeholder)"""
+        pass
 
 def main():
+    processor = ATCFProcessor()
+    
     print("\nChina Met Agency/Guangzhou Bulletin to ATCF Track File Version 1.0")
     print("Copyright(c) 2023, Charles C Watson Jr.  All Rights Reserved.\n")
 
-    numpos, numfpos = 0, 0
-    mvmt, rmax, vmax, mslp = 'NA', 0, 0, 0
-    infile = "input_file.txt"  # Replace with actual file argument
-    valid = os.path.exists(infile)
+    # Parse command line arguments
+    infile = ""
+    for i, arg in enumerate(sys.argv[1:]):
+        if arg.startswith("-in"):
+            if i + 1 < len(sys.argv[1:]):
+                infile = sys.argv[i + 2]
 
-    if not valid:
+    if not infile:
+        print("Error: No input file specified")
+        sys.exit(1)
+
+    if not os.path.exists(infile):
         print(f"*Error* {infile} does not exist!")
-        return
+        sys.exit(1)
 
     print(f"Reading {infile}")
 
-    with open(infile, 'r') as file:
-        lines = file.readlines()
+    current_time = datetime.now()
+    yy = current_time.year
+    mm = current_time.month
+    dd = current_time.day
+    hh = current_time.hour
 
-    for line in lines:
-        if "WHCI" in line:
-            wmohdr = line[:18]
+    with open(infile, 'r') as f:
+        while True:
+            # Find WHCI line
+            while True:
+                buffy = f.readline().strip()
+                if not buffy:
+                    break  # EOF
+                if "WHCI" in buffy:
+                    break
+            else:
+                break  # EOF reached
+
+            wmohdr = buffy[:18]
             print(wmohdr)
-            break
 
-    for line in lines:
-        if 'AT ' in line:
-            print(line.strip())
-            # Extract data from the line
-            dd, hh, yy1, sn1 = map(int, line.split()[1:5])
-            atcfid = f"WP{sn1:02d}20{yy1:02d}"
-            break
+            # Process the bulletin
+            tlat = 0.0
+            tlon = 0.0
+            vmax = 0
+            atcfid = ""
+            
+            while True:
+                buffy = f.readline().strip()
+                if not buffy:
+                    break  # EOF
 
-    current_date = date_and_time()
-    yy, mm = current_date['year'], current_date['month']
-    if dd > current_date['day']:
-        mm -= 1
+                if 'AT ' in buffy:
+                    print(buffy)
+                    # Parse date/time information
+                    parts = buffy.split()
+                    dd = int(parts[1])
+                    hh = int(parts[2])
+                    yy1 = int(parts[3])
+                    sn1 = int(parts[4])
+                    atcfid = f"WP{sn1:02d}{20}{yy1:02d}"
+                    
+                    while True:
+                        buffy = f.readline().strip()
+                        if not buffy:
+                            break
+                        print(buffy)
+                        
+                        if 'FCST' in buffy:
+                            break
+                        if buffy.startswith('NEAR'):
+                            if 'R' in buffy:
+                                iz = buffy.index('R') + 1
+                                tlat = float(buffy[iz:].split()[0])
+                            if 'H' in buffy:
+                                iz = buffy.index('H') + 1
+                                tlon = float(buffy[iz:].split()[0])
+                            if 'SOUTH' in buffy:
+                                tlat = -tlat
+                        if 'MAX WINDS' in buffy:
+                            vmax = int(buffy[10:].split()[0])
+                    break
 
-    print(yy, mm, dd, hh)
+            if dd > current_time.day:
+                mm -= 1
 
-    # Dummy values for tlat, tlon
-    tlat, tlon = 0.0, 0.0
-    fix_lat, fix_lon = tlat, tlon
-    jdnow = julian_day(mm, dd, yy, hh)
+            print(yy, mm, dd, hh)
+            print(tlat, tlon, vmax)
+            fix_lat = tlat
+            fix_lon = tlon
 
-    print(atcfid, yy, mm, dd, hh)
+            jdnow = processor.djuliana(mm, dd, yy, hh * 1.0)
+            print(atcfid, yy, mm, dd, hh)
+            found = False
+            processor.match_atcf_id(fix_lat, fix_lon, yy, mm, dd, hh, atcfid, found)
+            print(atcfid, yy, mm, dd, hh)
 
-    found = match_atcf_id(fix_lat, fix_lon, yy, mm, dd, hh, atcfid)
-    print(atcfid, yy, mm, dd, hh)
+            atfile = f"A{atcfid}.bcgz"
+            if not os.path.exists(atfile):
+                print(f"*Caution* {atfile} does not exist!")
+                processor.num_fcst = 0
+            else:
+                processor.clear_internal_atcf()
+                processor.get_atcf_records(atfile, 'ANY ')
 
-    atfile = f"A{atcfid}.bcgz"
-    if not os.path.exists(atfile):
-        print(f"*Caution* {atfile} does not exist!")
-        num_fcst = 0
-    else:
-        read_atcf_records(atfile, 'ANY')
+            jdmsg = processor.djuliana(mm, dd, yy, hh * 1.0)
 
-    jdmsg = julian_day(mm, dd, yy, hh)
+            # Check if forecast already exists
+            found = False
+            for fcst in processor.fcst:
+                if fcst.tech == 'BCGZ' and abs(fcst.jdnow - jdmsg) < 1.0 / 24:
+                    found = True
+                    break
 
-    found = False
-    # Loop through forecasts
-    for i in range(10):  # Replace with actual number of forecasts
-        if found:
-            break
+            if found:
+                print("Forecast already in ATCF file")
+                continue
 
-    if found:
-        print('Forecast already in ATCF file')
-        return
+            # Create new forecast record
+            new_fcst = Forecast()
+            processor.num_fcst += 1
+            new_fcst.basin = atcfid[:2]
+            new_fcst.cyNum = int(atcfid[2:4])
+            new_fcst.DTG = f"{yy:04d}{mm:02d}{dd:02d}{hh:02d}"
+            new_fcst.jdnow = jdmsg
+            new_fcst.technum = 1
+            new_fcst.tech = 'BCGZ'
+            new_fcst.stormname = ''
 
-    # Dummy implementation for forecast update
-    print('Updated ', atcfid, ' ATCF file.')
+            # Add initial position
+            numfpos = 0
+            new_fcst.track[numfpos].tau = 0
+            new_fcst.track[numfpos].lat = fix_lat
+            new_fcst.track[numfpos].lon = fix_lon
+            new_fcst.track[numfpos].vmax = vmax
+            new_fcst.track[numfpos].mslp = 0  # mslp not set in original
+            new_fcst.track[numfpos].mrd = 0   # rmax not set in original
 
-    # Append to a file
-    with open('bcgz_updated.dat', 'a') as file:
-        file.write(atcfid + '\n')
+            # Process forecast positions
+            while True:
+                if 'FCST' not in buffy:
+                    buffy = f.readline()
+                    if not buffy:
+                        break
+                    continue
+
+                # Parse forecast data
+                parts = buffy.split()
+                vt = int(parts[1])
+                
+                buffy = f.readline()
+                if not buffy:
+                    break
+                
+                if 'R' in buffy:
+                    iz = buffy.index('R') + 1
+                    tlat = float(buffy[iz:].split()[0])
+                if 'H' in buffy:
+                    iz = buffy.index('H') + 1
+                    tlon = float(buffy[iz:].split()[0])
+                if 'SOUTH' in buffy:
+                    tlat = -tlat
+                
+                buffy = f.readline()
+                if not buffy:
+                    break
+                
+                ivmax = int(buffy[10:].split()[0])
+
+                numfpos += 1
+                new_fcst.track[numfpos].tau = vt
+                new_fcst.track[numfpos].lat = tlat
+                new_fcst.track[numfpos].lon = tlon
+                new_fcst.track[numfpos].vmax = ivmax
+                print(vt, tlat, tlon, ivmax)
+
+            processor.fcst.append(new_fcst)
+
+            # Write output file
+            with open(atfile, 'w') as atf:
+                # In a full implementation, this would write all records
+                processor.sort_carq_records()
+                for i in range(processor.num_carq):
+                    processor.write_carq_record(i)
+
+                processor.sort_fcst_records()
+                for i in range(processor.num_fcst):
+                    processor.write_fcst_record(i)
+
+            print(f"Updated {atcfid} ATCF file.")
+            
+            with open('bcgz_updated.dat', 'a') as sqlf:
+                sqlf.write(f"{atcfid}\n")
 
 if __name__ == "__main__":
     main()
