@@ -1,965 +1,507 @@
 import os
 import re
-from datetime import datetime
-import math
+from datetime import datetime, timedelta
+from typing import List, Dict
+import sys
 
-class TPCAdvisoryParser:
+
+# Initialize variables
+infile = None
+
+# Get the number of command-line arguments
+numargs = len(sys.argv)
+
+# Loop through the command-line arguments
+for i in range(1, numargs):  # Start from 1 to skip the script name
+    if sys.argv[i] == "-in":  # Check if the argument is "-in"
+        if i + 1 < numargs:  # Ensure there is a value after "-in"
+            infile = sys.argv[i + 1]  # Get the value of the infile
+        else:
+            print("Error: No input file specified after '-in'")
+            sys.exit(1)
+
+# Check if infile was set
+if infile is None:
+    print("Error: '-in' argument is required")
+    sys.exit(1)
+
+# Print the infile for debugging
+print(f"Input file: {infile}")
+
+def extract_atcfid(filepath: str) -> str:
+    with open(filepath, 'r') as file:
+        for line in file:
+            # Look for the line containing the ATCFID
+            match = re.search(r'\b(AL|EP|CP|WP|IO|SH|SL|GM|MM|AA|BB|CC|DD|EE|FF|GG|HH|II|JJ|KK|LL|NN|OO|PP|QQ|RR|SS|TT|UU|VV|WW|XX|YY|ZZ)\d{6}\b', line)
+            if match:
+                return match.group(0)  # Return the matched ATCFID
+    raise ValueError(f"ATCFID not found in file: {filepath}")
+
+atfile = f"A{extract_atcfid(infile)}.DAT"  # Construct the ATCF output file name
+ATCF_CYNUM = atfile[3:5]  # Extract the ATCF cyclone number from the filename
+print(atfile)
+ATCF_BASIN = atfile[1:3]  # Extract the ATCF basin from the filename
+ATCF_YEAR = atfile[4:8]  # Extract the ATCF year from the filename
+
+
+# ATCF-related structures
+class TrackPoint:
     def __init__(self):
-        self.UINP = 200
-        self.USQL = 201
-        self.scan_mode = 0
-        self.SCAN_HDR = 0
-        self.SCAN_FST = 1
-        self.SCAN_POS = 2
-        self.inbuffy = ""
-        self.infile = ""
-        self.atfile = ""
-        
-        # ATCF module data structures
-        self.fcst = []
-        self.num_fcst = 0
-        self.num_carq = 0
-        self.UnitAT = 202
-        
-        # Month abbreviations to numbers
-        self.month_map = {
-            'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
-            'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
-        }
-        
-    def clear_internal_atcf(self):
-        """Clear internal ATCF data structures"""
-        self.fcst = []
-        self.num_fcst = 0
-        self.num_carq = 0
-    
-    def djuliana(self, month, day, year, hour):
-        """Convert date to Julian day"""
-        # Simplified version - for precise calculation consider using datetime or specialized libraries
-        dt = datetime(year, month, day, int(hour), int((hour % 1) * 60))
-        return dt.timestamp() / 86400.0 + 2440587.5  # Unix epoch to Julian day
-    
-    def getline(self, file_handle):
-        """Read a line from input file and clean it"""
-        line = file_handle.readline()
-        if not line:
-            return 1  # EOF
-        
-        # Clean the line
-        cleaned = []
-        for c in line[:255]:
-            ord_c = ord(c)
-            if ord_c < 32 or ord_c == 127:
-                cleaned.append(' ')
-            elif c == "'":
-                cleaned.append('*')
-            else:
-                cleaned.append(c)
-        
-        self.inbuffy = ''.join(cleaned).strip()
-        return 0
-    
-    def parse_nhc_marine(self):
-        """Parse NHC Marine advisory message"""
-        wmohdr = self.inbuffy[:18]
-        name = ""
-        advnr = 0
-        atcfid = ""
-        basin = ""
-        inum = 0
-        mo = dd = yy = hh = hh1 = 0
-        fix_lat = fix_lon = fc_lat = fc_lon = fc_vmax = 0.0
-        vmax = mslp = vt = 0
-        mvmt = ""
-        valid = False
-        found = False
-        
-        print(f"Marine Message ID: {wmohdr}")
-        
-        # Find header line and read name
-        with open(self.infile, 'r') as fin:
-            while True:
-                line = fin.readline()
-                if not line:
-                    return
-                
-                iza = line.find("FORECAST/ADVISORY")
-                if iza != -1:
-                    try:
-                        advnr = int(line[iza+25:iza+28].strip())
-                    except ValueError:
-                        advnr = 0
-                    
-                    if "SPECIAL" in line:
-                        iza = line.find("SPECIAL")
-                    if "INTERMEDIATE" in line:
-                        iza = line.find("INTERMEDIATE")
-                    
-                    izb = iza - 1
-                    while izb > 0 and line[izb] == ' ':
-                        izb -= 1
-                    
-                    idx = izb - 1
-                    while idx > 0 and line[idx] != ' ':
-                        idx -= 1
-                    
-                    name = line[idx+1:izb+1].strip()
-                    break
-        
-        print(f"{name} {advnr}")
-        
-        # Read ATCF ID
-        with open(self.infile, 'r') as fin:
-            self.getline(fin)
-            line = self.inbuffy
-            item = line[-10:-8].strip()
-            try:
-                ival = int(line[-8:-6])
-                iyear = int(line[-6:-2])
-            except ValueError:
-                ival = iyear = 0
-            
-            if not item:
-                idx = line.find(" AL") + 1
-                if idx == 0:
-                    idx = line.find(" EP") + 1
-                if idx == 0:
-                    idx = line.find(" CP") + 1
-                
-                if idx > 0:
-                    item = line[idx:idx+2]
-                    try:
-                        ival = int(line[idx+2:idx+4])
-                        iyear = int(line[idx+4:idx+8])
-                    except ValueError:
-                        return
-                
-                atcfid = f"{item}{ival:02d}{iyear:04d}"
-            else:
-                atcfid = f"{item}{ival:02d}{iyear:04d}"
-        
-        print(f"atcfid: {atcfid} {item} {iyear}")
-        basin = atcfid[:2]
-        inum = ival
-        
-        # Read date and time
-        with open(self.infile, 'r') as fin:
-            self.getline(fin)
-            line = self.inbuffy
-            if "ISSUED" in line:
-                self.getline(fin)
-                line = self.inbuffy
-            
-            try:
-                # Try different formats to parse the date
-                parts = line.split()
-                hh = int(parts[0])
-                dd = int(parts[2])
-                yy = int(parts[3])
-            except (IndexError, ValueError):
-                return
-            
-            # Determine month
-            mo = -1
-            for month_abbr, month_num in self.month_map.items():
-                if month_abbr in line:
-                    mo = month_num
-                    break
-            
-            if mo < 0:
-                return
-            
-            print(f"Time: {hh} {dd} {mo} {yy}")
-            
-            # Parse the rest of the message
-            while True:
-                self.getline(fin)
-                if not self.inbuffy:
-                    break
-                
-                if ("FORECASTER" in self.inbuffy or 
-                    "NNNN" in self.inbuffy or 
-                    "REQUEST FOR" in self.inbuffy):
-                    break
-                
-                if "PRESENT MOVEMENT" in self.inbuffy:
-                    if "STATIONARY" in self.inbuffy:
-                        mvmt = self.inbuffy[17:].strip()
-                    else:
-                        mvmt = self.inbuffy[28:].strip()
-                
-                if "MAX SUSTAINED" in self.inbuffy:
-                    try:
-                        vmax = int(self.inbuffy[20:].strip())
-                    except ValueError:
-                        pass
-                
-                if "MINIMUM CENTRAL PRES" in self.inbuffy:
-                    try:
-                        mslp = int(self.inbuffy[35:].strip())
-                    except ValueError:
-                        pass
-                
-                if "REPEAT...CENTER L" in self.inbuffy:
-                    try:
-                        parts = self.inbuffy[29:].split()
-                        fc_lat = float(parts[0])
-                        ns = parts[1]
-                        fc_lon = float(parts[2])
-                        ew = parts[3]
-                        
-                        if ns == 'S':
-                            fc_lat = -fc_lat
-                        if ew == 'W':
-                            fc_lon = -fc_lon
-                    except (IndexError, ValueError):
-                        pass
-                
-                if "CENTER LOCATED NEAR" in self.inbuffy:
-                    idx = self.inbuffy.find("NEAR") + 5
-                    try:
-                        parts = self.inbuffy[idx:].split()
-                        fc_lat = float(parts[0])
-                        ns = parts[1]
-                        fc_lon = float(parts[2])
-                        ew = parts[3]
-                        
-                        if ns == 'S':
-                            fc_lat = -fc_lat
-                        if ew == 'W':
-                            fc_lon = -fc_lon
-                        
-                        # Get time
-                        idx2 = self.inbuffy.find("/") + 1
-                        hh1 = int(self.inbuffy[idx2:idx2+4].strip())
-                    except (IndexError, ValueError):
-                        pass
-                
-                if "CENTER WAS LOCATED NEAR" in self.inbuffy:
-                    idx = self.inbuffy.find("NEAR") + 5
-                    try:
-                        parts = self.inbuffy[idx:].split()
-                        fix_lat = float(parts[0])
-                        ns = parts[1]
-                        fix_lon = float(parts[2])
-                        ew = parts[3]
-                        
-                        if ns == 'S':
-                            fix_lat = -fix_lat
-                        if ew == 'W':
-                            fix_lon = -fix_lon
-                        
-                        # Get time
-                        idx2 = self.inbuffy.find("/") + 1
-                        hh1 = int(self.inbuffy[idx2:idx2+4].strip())
-                    except (IndexError, ValueError):
-                        pass
-                    break
-        
-        print(f"hh1: {hh1} {fc_lat} {fc_lon} {fix_lat} {fix_lon}")
-        
-        jdmsg = self.djuliana(mo, dd, yy, hh1 / 100.0)
-        self.atfile = f"A{atcfid}.DAT"
-        
-        if not os.path.exists(self.atfile):
-            print(f"*Caution* {self.atfile} does not exist!")
-            self.num_fcst = 0
-        else:
-            print(f"Loading {self.atfile}")
-            self.clear_internal_atcf()
-            self.get_atcf_records(self.atfile, 'ANY ')
-        
-        # Check if this record already exists
-        found = False
-        for i in range(self.num_fcst):
-            if (self.fcst[i]['tech'] == 'OFCL' and 
-                abs(self.fcst[i]['jdnow'] - jdmsg) < 1.0 / 24):
-                found = True
-                break
-        
-        if found:
-            return
-        
-        # Add new forecast record
-        self.num_fcst += 1
-        new_fcst = {
-            'basin': basin,
-            'cyNum': inum,
-            'DTG': f"{yy:04d}{mo:02d}{dd:02d}{hh1//100:02d}",
-            'jdnow': jdmsg,
-            'technum': 1,
-            'tech': 'OFCL',
-            'stormname': name,
-            'track': [
-                {'tau': 0, 'lat': fix_lat, 'lon': fix_lon, 'vmax': vmax, 'mslp': mslp},
-                {'tau': 3, 'lat': fc_lat, 'lon': fc_lon, 'vmax': vmax, 'mslp': mslp}
-            ]
-        }
-        
-        self.fcst.append(new_fcst)
-        
-        # Parse forecast positions
-        vt = 12
-        fidx = 2  # First two positions already added
-        
-        with open(self.infile, 'r') as fin:
-            while True:
-                self.getline(fin)
-                if not self.inbuffy:
-                    break
-                
-                if ("FORECASTER" in self.inbuffy or 
-                    "NNNN" in self.inbuffy or 
-                    "ADVISORY" in self.inbuffy):
-                    break
-                
-                if "VALID" in self.inbuffy:
-                    idx = self.inbuffy.find("Z") + 2
-                    try:
-                        parts = self.inbuffy[idx:].split()
-                        fc_lat = float(parts[0])
-                        ns = parts[1]
-                        fc_lon = float(parts[2])
-                        ew = parts[3]
-                        
-                        if ns == 'S':
-                            fc_lat = -fc_lat
-                        if ew == 'W':
-                            fc_lon = -fc_lon
-                        
-                        # Read next line for vmax
-                        self.getline(fin)
-                        if not self.inbuffy:
-                            break
-                        
-                        fc_vmax = int(self.inbuffy[8:].strip())
-                        
-                        # Add to track
-                        self.fcst[-1]['track'].append({
-                            'tau': vt,
-                            'lat': fc_lat,
-                            'lon': fc_lon,
-                            'vmax': fc_vmax
-                        })
-                        
-                        fidx += 1
-                        vt += 12
-                        if vt == 84:
-                            vt = 96
-                        if vt == 108:
-                            vt = 120
-                    except (IndexError, ValueError):
-                        pass
-                
-                self.getline(fin)
-                if not self.inbuffy:
-                    break
-        
-        # Write out updated file
-        with open(self.atfile, 'w') as fout:
-            self.sort_carq_records()
-            for i in range(self.num_carq):
-                self.write_carq_record(fout, i)
-            
-            self.sort_fcst_records()
-            for i in range(self.num_fcst):
-                self.write_fcst_record(fout, i)
-        
-        # Generate SQL files
-        with open("rsfc_messages_table.sql", 'w') as sql:
-            sql.write("drop table rsfc_messages;\n")
-            sql.write("create table rsfc_messages (\n")
-            sql.write(" atcfid char(8),\n")
-            sql.write(" msg_hdr char(18),\n")
-            sql.write(" msg_type char(10),\n")
-            sql.write(" msg_advnr int,\n")
-            sql.write(" msg_time timestamp,\n")
-            sql.write(" fcst_time timestamp,\n")
-            sql.write(" message text,\n")
-            sql.write(" lat real,\n") 
-            sql.write(" lon real,\n")
-            sql.write(" vmax int,\n")
-            sql.write(" mslp int,\n")
-            sql.write(" movement varchar(40)\n")
-            sql.write(");\n")
-            sql.write(f"SELECT AddGeometryColumn ('public', 'rsfc_messages', 'geom', 4326, 'POINT', 2);\n")
-        
-        print(f"Updated {atcfid} ATCF file.")
-        
-        with open('tpc_updated.dat', 'a') as f:
-            f.write(f"{atcfid}\n")
-        
-        # Second SQL file
-        with open("rsfc_messages_table.sql", 'w') as sql:
-            sql.write("create table rsfc_messages (\n")
-            sql.write(" atcfid char(8),\n")
-            sql.write(" msg_hdr char(18),\n")
-            sql.write(" msg_type char(10),\n")
-            sql.write(" msg_advnr int,\n")
-            sql.write(" msg_time timestamp,\n")
-            sql.write(" fcst_time timestamp,\n")
-            sql.write(" lat real,\n") 
-            sql.write(" lon real,\n")
-            sql.write(" vmax int,\n")
-            sql.write(" mslp int,\n")
-            sql.write(" movement varchar(80),\n")
-            sql.write(" message text\n")
-            sql.write(");\n")
-            sql.write(f"SELECT AddGeometryColumn ('public', 'rsfc_messages', 'geom', 4326, 'POINT', 2);\n")
-        
-        # Message-specific SQL
-        fname = f"{atcfid}_message.sql"
-        with open(fname, 'w') as sql:
-            sql.write("INSERT INTO rsfc_messages (atcfid,msg_hdr,msg_type,msg_advnr,msg_time,fcst_time,lat,lon,vmax,mslp,movement,message,geom) VALUES(\n")
-            sql.write(f"    '{atcfid}',\n")
-            sql.write(f"    '{wmohdr.strip()}',\n")
-            sql.write("    'FORECAST',\n")
-            sql.write(f"    {advnr:5d},\n")
-            sql.write(f"    '{yy:04d}-{mo:02d}-{dd:02d} {hh//100:02d}:00',\n")
-            sql.write(f"    '{yy:04d}-{mo:02d}-{dd:02d} {hh1//100:02d}:00',\n")
-            sql.write(f"    {fix_lat:10.5f},\n")
-            sql.write(f"    {fix_lon:10.5f},\n")
-            sql.write(f"    {vmax:5d},\n")
-            sql.write(f"    {mslp:5d},\n")
-            sql.write(f"    '{mvmt.strip()}',\n")
-            
-            # Write message content
-            sql.write("''")
-            with open(self.infile, 'r') as fin:
-                for line in fin:
-                    sql.write(line.strip() + "\n")
-            sql.write("',\n")
-            
-            sql.write(f"    ST_GeomFromText('POINT({fix_lon:12.6f} {fix_lat:12.6f})',4326));\n")
-    
-    def parse_nhc_public(self):
-        """Parse NHC Public advisory message"""
-        wmohdr = self.inbuffy[:18]
-        name = ""
-        advnr = 0
-        atcfid = ""
-        basin = ""
-        inum = 0
-        mo = dd = yy = hh = hh1 = 0
-        fix_lat = fix_lon = 0.0
-        vmax = mslp = 0
-        mvmt = ""
-        mytech = "OFCP"
-        
-        print(f"Public Message ID: {wmohdr}")
-        
-        # Find header line and read name
-        with open(self.infile, 'r') as fin:
-            while True:
-                self.getline(fin)
-                if not self.inbuffy:
-                    return
-                
-                iza = self.inbuffy.find("ADVISORY")
-                if iza != -1:
-                    try:
-                        advnr = int(self.inbuffy[iza+16:iza+20].strip())
-                    except ValueError:
-                        advnr = 0
-                    
-                    if "SPECIAL" in self.inbuffy:
-                        iza = self.inbuffy.find("SPECIAL")
-                    if "INTERMEDIATE" in self.inbuffy:
-                        iza = self.inbuffy.find("INTERMEDIATE")
-                    
-                    izb = iza - 1
-                    while izb > 0 and self.inbuffy[izb] == ' ':
-                        izb -= 1
-                    
-                    idx = izb - 1
-                    while idx > 0 and self.inbuffy[idx] != ' ':
-                        idx -= 1
-                    
-                    name = self.inbuffy[idx+1:izb+1].strip()
-                    break
-        
-        # Read ATCF ID
-        with open(self.infile, 'r') as fin:
-            self.getline(fin)
-            line = self.inbuffy
-            item = line[-10:-6].strip()
-            try:
-                iyear = int(line[-6:-2])
-            except ValueError:
-                iyear = 0
-            
-            if not item:
-                idx = line.find(" AL") + 1
-                if idx == 0:
-                    idx = line.find(" EP") + 1
-                if idx == 0:
-                    idx = line.find(" CP") + 1
-                
-                if idx > 0:
-                    item = line[idx:idx+4].strip()
-                    try:
-                        iyear = int(line[idx+4:idx+8])
-                    except ValueError:
-                        return
-                
-                atcfid = f"{item}{iyear:04d}"
-            else:
-                atcfid = f"{item}{iyear:04d}"
-        
-        basin = item[:2]
-        try:
-            inum = int(item[2:4])
-        except ValueError:
-            inum = 0
-        
-        # Read date and time
-        with open(self.infile, 'r') as fin:
-            self.getline(fin)
-            line = self.inbuffy
-            if "ISSUED" in line:
-                self.getline(fin)
-                line = self.inbuffy
-            
-            try:
-                # Try different formats to parse the date
-                parts = line.split()
-                hh = int(parts[0])
-                dd = int(parts[2])
-                yy = int(parts[3])
-            except (IndexError, ValueError):
-                # Try discussion format
-                try:
-                    hh = int(line[:4])
-                    parts = line[-7:].split()
-                    dd = int(parts[0])
-                    yy = int(parts[1])
-                except (IndexError, ValueError):
-                    return
-            
-            # Determine month
-            mo = -1
-            for month_abbr, month_num in self.month_map.items():
-                if month_abbr in line:
-                    mo = month_num
-                    break
-            
-            if mo < 0:
-                return
-            
-            # Determine timezone offset
-            hoff = 400
-            if "CDT" in line or "EST" in line:
-                hoff = 500
-            elif "EDT" in line:
-                hoff = 400
-            
-            hh1 = hh + hoff
-            
-            if "KWNH" in wmohdr:
-                mytech = "OHPC"
-            
-            # Parse the rest of the message
-            while True:
-                self.getline(fin)
-                if not self.inbuffy:
-                    break
-                
-                if "$$" in self.inbuffy:
-                    break
-                
-                if "LOCATION" in self.inbuffy:
-                    try:
-                        parts = self.inbuffy[10:].split()
-                        fix_lat = float(parts[0])
-                        ns = parts[1]
-                        fix_lon = float(parts[2])
-                        ew = parts[3]
-                        
-                        if ns == 'S':
-                            fix_lat = -fix_lat
-                        if ew == 'W':
-                            fix_lon = -fix_lon
-                    except (IndexError, ValueError):
-                        pass
-                
-                if "MAXIMUM SUS" in self.inbuffy:
-                    try:
-                        vmax = int(self.inbuffy[26:].strip()) / 1.15
-                    except ValueError:
-                        pass
-                
-                if "MINIMUM CENT" in self.inbuffy:
-                    try:
-                        mslp = int(self.inbuffy[27:].strip())
-                    except ValueError:
-                        pass
-                
-                if "PRESENT MOVEMENT" in self.inbuffy:
-                    mvmt = self.inbuffy[19:].strip()
-                
-                if "INITIAL" in self.inbuffy:
-                    try:
-                        parts = self.inbuffy[8:].split()
-                        dd1 = int(parts[0])
-                        hh1 = int(parts[1])
-                        fix_lat = float(parts[2])
-                        ns = parts[3]
-                        fix_lon = float(parts[4])
-                        ew = parts[5]
-                        vmax = int(parts[6])
-                        
-                        if ns == 'S':
-                            fix_lat = -fix_lat
-                        if ew == 'W':
-                            fix_lon = -fix_lon
-                    except (IndexError, ValueError):
-                        pass
-                    break
-        
-        jdmsg = self.djuliana(mo, dd, yy, hh1 / 100.0)
-        self.atfile = f"A{atcfid}.DAT"
-        
-        if not os.path.exists(self.atfile):
-            print(f"*Caution* {self.atfile} does not exist!")
-            self.num_fcst = 0
-        else:
-            print(f"Loading {self.atfile}")
-            self.clear_internal_atcf()
-            self.get_atcf_records(self.atfile, 'ANY ')
-        
-        # Check if this record already exists
-        found = False
-        for i in range(self.num_fcst):
-            if (self.fcst[i]['tech'] == mytech and 
-                abs(self.fcst[i]['jdnow'] - jdmsg) < 1.0 / 24):
-                found = True
-                break
-        
-        if found:
-            return
-        
-        # Add new forecast record
-        self.num_fcst += 1
-        new_fcst = {
-            'basin': basin,
-            'cyNum': inum,
-            'DTG': f"{yy:04d}{mo:02d}{dd:02d}{hh1//100:02d}",
-            'jdnow': jdmsg - 3.0 / 24.0,
-            'technum': 1,
-            'tech': mytech,
-            'stormname': name,
-            'track': [
-                {'tau': 3, 'lat': fix_lat, 'lon': fix_lon, 'vmax': vmax, 'mslp': mslp}
-            ]
-        }
-        
-        self.fcst.append(new_fcst)
-        
-        # Parse forecast positions
-        fidx = 1  # First position already added
-        
-        with open(self.infile, 'r') as fin:
-            while True:
-                self.getline(fin)
-                if not self.inbuffy:
-                    break
-                
-                if "HR VT" in self.inbuffy:
-                    try:
-                        parts = self.inbuffy.split()
-                        vt = int(parts[0])
-                        dd1 = int(parts[1])
-                        hh1 = int(parts[2])
-                        fix_lat = float(parts[3])
-                        ns = parts[4]
-                        fix_lon = float(parts[5])
-                        ew = parts[6]
-                        vmax = int(parts[7])
-                        
-                        if ns == 'S':
-                            fix_lat = -fix_lat
-                        if ew == 'W':
-                            fix_lon = -fix_lon
-                        
-                        # Add to track
-                        self.fcst[-1]['track'].append({
-                            'tau': vt,
-                            'lat': fix_lat,
-                            'lon': fix_lon,
-                            'vmax': 0,
-                            'mslp': 0
-                        })
-                        
-                        fidx += 1
-                    except (IndexError, ValueError):
-                        pass
-        
-        # Generate SQL files (similar to marine advisory)
-        # ... (omitted for brevity, similar to parse_nhc_marine)
-    
-    def parse_nhc_discuss(self):
-        """Parse NHC Discussion message"""
-        wmohdr = self.inbuffy[:18]
-        name = ""
-        advnr = 0
-        atcfid = ""
-        basin = ""
-        inum = 0
-        mo = dd = yy = hh = hh1 = 0
-        fix_lat = fix_lon = 0.0
-        vmax = mslp = 0
-        mvmt = ""
-        
-        print(f"Discussion Message ID: {wmohdr}")
-        
-        # Find header line and read name
-        with open(self.infile, 'r') as fin:
-            while True:
-                line = fin.readline()
-                if not line:
-                    return
-                
-                iza = line.find("DISCUSSION")
-                if iza != -1:
-                    try:
-                        advnr = int(line[iza+17:iza+21].strip())
-                    except ValueError:
-                        advnr = 0
-                    
-                    if "SPECIAL" in line:
-                        iza = line.find("SPECIAL")
-                    if "INTERMEDIATE" in line:
-                        iza = line.find("INTERMEDIATE")
-                    
-                    izb = iza - 1
-                    while izb > 0 and line[izb] == ' ':
-                        izb -= 1
-                    
-                    idx = izb - 1
-                    while idx > 0 and line[idx] != ' ':
-                        idx -= 1
-                    
-                    name = line[idx+1:izb+1].strip()
-                    break
-        
-        # Read ATCF ID
-        with open(self.infile, 'r') as fin:
-            self.getline(fin)
-            line = self.inbuffy
-            item = line[-10:-6].strip()
-            try:
-                iyear = int(line[-6:-2])
-            except ValueError:
-                iyear = 0
-            
-            if not item:
-                idx = line.find(" AL") + 1
-                if idx > 0:
-                    item = line[idx:idx+4].strip()
-                    try:
-                        iyear = int(line[idx+4:idx+8])
-                    except ValueError:
-                        return
-                
-                atcfid = f"{item}{iyear:04d}"
-            else:
-                atcfid = f"{item}{iyear:04d}"
-        
-        basin = item[:2]
-        try:
-            inum = int(item[2:4])
-        except ValueError:
-            inum = 0
-        
-        # Read date and time
-        with open(self.infile, 'r') as fin:
-            self.getline(fin)
-            line = self.inbuffy
-            if "ISSUED" in line:
-                self.getline(fin)
-                line = self.inbuffy
-            
-            try:
-                # Try different formats to parse the date
-                parts = line.split()
-                hh = int(parts[0])
-                dd = int(parts[2])
-                yy = int(parts[3])
-            except (IndexError, ValueError):
-                # Try discussion format
-                try:
-                    hh = int(line[:4])
-                    parts = line[-7:].split()
-                    dd = int(parts[0])
-                    yy = int(parts[1])
-                except (IndexError, ValueError):
-                    return
-            
-            # Determine month
-            mo = -1
-            for month_abbr, month_num in self.month_map.items():
-                if month_abbr in line:
-                    mo = month_num
-                    break
-            
-            if mo < 0:
-                return
-            
-            # Parse the rest of the message
-            while True:
-                self.getline(fin)
-                if not self.inbuffy:
-                    break
-                
-                if ("FORECASTER" in self.inbuffy or 
-                    "NNNN" in self.inbuffy or 
-                    "FORECAST POSITIONS" in self.inbuffy):
-                    break
-            
-            while True:
-                self.getline(fin)
-                if not self.inbuffy:
-                    break
-                
-                if ("FORECASTER" in self.inbuffy or 
-                    "NNNN" in self.inbuffy or 
-                    "$$" in self.inbuffy):
-                    break
-                
-                if "INITIAL" in self.inbuffy:
-                    try:
-                        parts = self.inbuffy[12:].split()
-                        dd1 = int(parts[0])
-                        hh1 = int(parts[1])
-                        fix_lat = float(parts[2])
-                        ns = parts[3]
-                        fix_lon = float(parts[4])
-                        ew = parts[5]
-                        vmax = int(parts[6])
-                        
-                        if ns == 'S':
-                            fix_lat = -fix_lat
-                        if ew == 'W':
-                            fix_lon = -fix_lon
-                    except (IndexError, ValueError):
-                        pass
-        
-        jdmsg = self.djuliana(mo, dd, yy, hh1 / 100.0)
-        self.atfile = f"A{atcfid}.DAT"
-        
-        if not os.path.exists(self.atfile):
-            print(f"*Caution* {self.atfile} does not exist!")
-            self.num_fcst = 0
-        else:
-            print(f"Loading {self.atfile}")
-            self.clear_internal_atcf()
-            self.get_atcf_records(self.atfile, 'ANY ')
-        
-        # Check if this record already exists
-        found = False
-        for i in range(self.num_fcst):
-            if (self.fcst[i]['tech'] == 'OFCD' and 
-                abs(self.fcst[i]['jdnow'] - jdmsg) < 1.0 / 24):
-                found = True
-                break
-        
-        if found:
-            return
-        
-        # Add new forecast record
-        self.num_fcst += 1
-        new_fcst = {
-            'basin': basin,
-            'cyNum': inum,
-            'DTG': f"{yy:04d}{mo:02d}{dd:02d}{hh1//100:02d}",
-            'jdnow': jdmsg,
-            'technum': 1,
-            'tech': 'OFCD',
-            'stormname': name,
-            'track': [
-                {'tau': 3, 'lat': fix_lat, 'lon': fix_lon, 'vmax': vmax, 'mslp': mslp}
-            ]
-        }
-        
-        self.fcst.append(new_fcst)
-        
-        # Write out updated file and generate SQL files
-        # ... (omitted for brevity, similar to parse_nhc_marine)
-    
-    def parse_nhc_watch(self):
-        """Parse NHC Watch message"""
-        pass
-    
-    def get_atcf_records(self, filename, tech_filter):
-        """Load ATCF records from file (placeholder)"""
-        # Implementation would read the ATCF file and populate self.fcst and self.num_fcst
-        pass
-    
-    def sort_carq_records(self):
-        """Sort CARQ records (placeholder)"""
-        pass
-    
-    def sort_fcst_records(self):
-        """Sort forecast records (placeholder)"""
-        pass
-    
-    def write_carq_record(self, file_handle, index):
-        """Write CARQ record to file (placeholder)"""
-        pass
-    
-    def write_fcst_record(self, file_handle, index):
-        """Write forecast record to file (placeholder)"""
-        pass
+        self.tau = 0
+        self.lat = 0.0
+        self.cyNum = ATCF_CYNUM
+        self.lon = 0.0
+        self.vmax = 0
+        self.mslp = 0
+        self.radii = {"34": {"NE": 0, "SE": 0, "SW": 0, "NW": 0},
+                      "50": {"NE": 0, "SE": 0, "SW": 0, "NW": 0},
+                      "64": {"NE": 0, "SE": 0, "SW": 0, "NW": 0}}
 
+class Forecast:
+    def __init__(self):
+        self.basin = "AL"
+        self.cyNum = ATCF_CYNUM
+        self.DTG = ""
+        self.tech = "OFCL"
+        self.stormname = ""
+        self.track: List[TrackPoint] = []
+
+# Global storage for forecasts
+num_fcst = 0
+fcst: List[Forecast] = []
+current_storm = None  # To store current storm information
+
+def extract_month_from_file(filepath: str) -> int:
+    """Extract the month from NHC_message.dat and return it as an integer."""
+    # Map month abbreviations to integers
+    month_map = {
+        'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+        'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
+    }
+    
+    # Open the file and search for the month
+    with open(filepath, 'r') as file:
+        for line in file:
+            # Search for the month abbreviation in the line
+            match = re.search(r'\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\b', line)
+            if match:
+                month_str = match.group(1)
+                return month_map[month_str]
+    
+    # If no month is found, raise an error
+    raise ValueError(f"Month not found in file: {filepath}")
+
+def is_leap_year(year: int) -> bool:
+    """Check if a year is a leap year."""
+    return (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
+
+
+# Function to determine the number of days in a given month
+def days_in_month(year: int, month: int) -> int:
+    """Return the number of days in a given month."""
+    days_per_month = {
+        1: 31, 2: 29 if is_leap_year(year) else 28, 3: 31, 4: 30,
+        5: 31, 6: 30, 7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31
+    }
+    return days_per_month[month]
+
+
+def format_lat_lon(value: float, is_lat: bool) -> str:
+    """Format latitude or longitude into ATCF format."""
+    direction = "N" if is_lat else "W"
+    formatted = f"{abs(int(value * 10)):03d}{direction}"
+    return formatted
+
+def parse_radii(line: str) -> Dict[str, int]:
+    """Parse radii information from a line using regex."""
+    radii = {"NE": 0, "SE": 0, "SW": 0, "NW": 0}
+    match = re.search(r"(\d+)NE\s+(\d+)SE\s+(\d+)SW\s+(\d+)NW", line)
+    if match:
+        radii["NE"] = int(match.group(1))
+        radii["SE"] = int(match.group(2))
+        radii["SW"] = int(match.group(3))
+        radii["NW"] = int(match.group(4))
+    return radii
+
+
+def parse_current_storm(lines: List[str]):
+    """Parse current storm information using regex."""
+    global current_storm
+
+    # Extract the year from the file (assume it's on line 6)
+    year = None
+    for line in lines:
+        # Match a 4-digit year at the end of the line
+        year_match = re.search(r'\b(\d{4})$', line)
+        if year_match:
+            year = int(year_match.group(1))
+            break
+
+    if year is None:
+        raise ValueError("Year not found in NHC_message.dat")
+
+
+    for i, line in enumerate(lines):
+        # Match previous storm center location
+        print("line = ", line)
+        match_previous = re.search(r"AT (\d{2}/\d{4}Z) CENTER WAS LOCATED NEAR ([\d.]+[NS])\s+([\d.]+[EW])", line)
+        if match_previous:
+            # Extract the date, time, latitude, and longitude
+            prev_day = int(match_previous.group(1).strip()[0:2])
+            print("prev_day = ", prev_day)
+            prev_hour = int(match_previous.group(1).strip()[3:5])
+            prev_lat = float(match_previous.group(2).strip()[:-1])
+            prev_lon = float(match_previous.group(3).strip()[:-1])
+            print(prev_hour)
+            
+            # Print for debugging
+            print(f"Previous storm center location: {prev_lat}N, {prev_lon}W at day {prev_day}, hour {prev_hour}")
+            
+            # Optionally, store the previous storm center location in a variable or object
+            previous_storm = {
+                "day": prev_day,
+                "hour": prev_hour,
+                "lat": prev_lat,
+                "lon": prev_lon
+            }
+
+            break
+
+
+    current_month = extract_month_from_file(infile)
+    global dtg_previous
+    dtg_previous = datetime(year, current_month, prev_day, prev_hour)  # Format as YYYYMMDDHH
+    global initial_datetime
+    initial_datetime = dtg_previous  # Store the initial forecast datetime
+    dtg_previous = dtg_previous.strftime("%Y%m%d%H")  # Format as YYYYMMDDHH
+
+
+
+    for i, line in enumerate(lines):
+        # Match storm center location
+        match = re.search(r"(?:POTENTIAL TROP CYCLONE )?CENTER LOCATED NEAR\s+(\d+\.\d+)N\s+(\d+\.\d+)W", line)
+        print(match)
+        if match:
+            lat = float(match.group(1))
+            lon = float(match.group(2))
+            print("lat = ", lat)
+            print("lon = ", lon)
+            current_month = extract_month_from_file(infile)
+            print(current_month)
+            dtg_match = re.search(r"AT (\d{2})/(\d{4})Z", line)
+            if dtg_match:
+                day = int(dtg_match.group(1))
+                hour = int(dtg_match.group(2)[:2])
+                dtg = datetime(year, current_month, day, hour).strftime("%Y%m%d%H")  # Format as YYYYMMDDHH
+            else:
+                dtg = ""
+
+            # Parse pressure and wind speed
+            pressure_line = lines[i + 5]
+            mslp_match = re.search(r"ESTIMATED MINIMUM CENTRAL PRESSURE\s+(\d+)", pressure_line)
+            vmax_match = re.search(r"MAX SUSTAINED WINDS\s+(\d+)", lines[i+6])
+            if not vmax_match:
+                vmax_match = re.search(r"MAX SUSTAINED WINDS\s+(\d+)", lines[i+7])
+                # Parse radii
+                radii_64 = parse_radii(lines[i + 8])
+                radii_50 = parse_radii(lines[i + 9])
+                radii_34 = parse_radii(lines[i + 10])
+            else:
+                # Parse radii
+                radii_64 = parse_radii(lines[i + 7])
+                radii_50 = parse_radii(lines[i + 8])
+                radii_34 = parse_radii(lines[i + 9])
+
+            mslp = int(mslp_match.group(1)) if mslp_match else 0
+            vmax = int(vmax_match.group(1)) if vmax_match else 0
+
+
+            current_dtg = datetime(year, current_month, day, hour)  # Format as YYYYMMDDHH
+
+            # Create a TrackPoint for the current storm
+            global current_storm
+            current_storm = TrackPoint()
+            # Calculate tau based on the difference between the current and previous storm times
+
+            current_storm.tau = int((current_dtg - initial_datetime).total_seconds() // 3600)
+            current_storm.cyNum = int(ATCF_CYNUM)
+            current_storm.lat = lat
+            current_storm.lon = lon
+            current_storm.vmax = vmax
+            current_storm.mslp = mslp
+            current_storm.dtg = dtg  # Format as YYYYMMDDHH
+            current_storm.radii["64"] = radii_64
+            current_storm.radii["50"] = radii_50
+            current_storm.radii["34"] = radii_34
+
+            break
+
+
+
+
+    # Create a TrackPoint for the previous storm
+    global previous_storm_point
+    previous_storm_point = TrackPoint()
+    previous_storm_point.tau = 0
+    previous_storm_point.cyNum = int(ATCF_CYNUM)
+    previous_storm_point.lat = prev_lat
+    previous_storm_point.lon = prev_lon
+    previous_storm_point.vmax = vmax
+    previous_storm_point.mslp = mslp
+    previous_storm_point.dtg = dtg_previous  # Format as YYYYMMDDHH
+    previous_storm_point.radii["64"] = radii_64
+    previous_storm_point.radii["50"] = radii_50
+    previous_storm_point.radii["34"] = radii_34
+
+    print("prev storm = ", previous_storm_point.vmax)
+
+
+
+
+def extract_storm_name(filepath: str) -> str:
+    with open(filepath, 'r') as file:
+        for line in file:
+            # Look for the line containing "HURRICANE <name>" or "TROPICAL STORM <name>"
+            match = re.search(r'\b(HURRICANE|TROPICAL STORM|TROPICAL CYCLONE)\s+([A-Z]+)\b', line)
+            if match:
+                return match.group(2)  # Return the storm name
+    raise ValueError(f"Storm name not found in file: {filepath}")
+
+
+
+def parse_nhc_marine():
+    """Parse NHC marine advisory message using regex."""
+    global num_fcst, fcst
+
+    with open(infile, 'r') as f:
+        lines = f.readlines()
+    
+    # Extract the year from the file
+    year = None
+    for line in lines:
+        year_match = re.search(r'\b(\d{4})$', line)
+        if year_match:
+            year = int(year_match.group(1))
+            break
+
+    if year is None:
+        raise ValueError("Year not found in NHC_message.dat")
+    
+    # Extract the current month from the file
+    current_month = extract_month_from_file(infile)
+    
+    # Extract the storm name
+    storm_name = extract_storm_name(infile)
+
+    # Parse current storm information
+    parse_current_storm(lines)
+    
+    current_forecast = None
+ # To store the initial forecast datetime
+    for i, line in enumerate(lines):
+        # Match forecast data
+        if line.startswith("FORECAST VALID") or line.startswith("OUTLOOK VALID"):
+            try:
+                print(line)
+                # Extract date and time
+                date_time_match = re.search(r"(\d{2})/(\d{4})Z", line)
+                if date_time_match:
+                    day = int(date_time_match.group(1))
+                    hour = int(date_time_match.group(2)[:2])
+
+                    print(current_month)
+                    print(day)
+
+
+                    forecast_datetime = datetime(year, current_month, day, hour)  # Keep as datetime object
+                    
+                    print(forecast_datetime)
+
+                    
+                    # Calculate the timedelta in hours from the initial forecast
+                    timedelta_hours = int((forecast_datetime - initial_datetime).total_seconds() // 3600)
+                    if timedelta_hours < 0:
+                        current_month += 1
+                        forecast_datetime = datetime(year, current_month, day, hour)  # Keep as datetime object
+                        timedelta_hours = int((forecast_datetime - initial_datetime).total_seconds() // 3600)
+
+
+                        
+
+                else:
+                    raise ValueError(f"Invalid date format in line: {line}")
+                
+                # Extract latitude and longitude
+                lat_lon_line = lines[i]
+                lat_lon_match = re.search(r"(\d+\.\d+)N\s+(\d+\.\d+)W", lat_lon_line)
+                lat = float(lat_lon_match.group(1)) if lat_lon_match else 0.0
+                lon = float(lat_lon_match.group(2)) if lat_lon_match else 0.0
+                
+                # Extract maximum wind speed
+                vmax_line = lines[i + 1]
+                print(vmax_line)
+                vmax_match = re.search(r"MAX WIND\s+(\d+)", vmax_line)
+                vmax = int(vmax_match.group(1)) if vmax_match else 0
+
+
+                # Initialize radii dictionaries with default values
+                radii_34 = {"NE": 0, "SE": 0, "SW": 0, "NW": 0}
+                radii_50 = {"NE": 0, "SE": 0, "SW": 0, "NW": 0}
+                radii_64 = {"NE": 0, "SE": 0, "SW": 0, "NW": 0}
+
+                # Check for and parse radii lines dynamically
+                for j in range(2, 6):  # Look at the next few lines for radii information
+                    if i + j < len(lines):
+                        line = lines[i + j]
+                        if "64 KT" in line:
+                            radii_64 = parse_radii(line)
+                        elif "50 KT" in line:
+                            radii_50 = parse_radii(line)
+                        elif "34 KT" in line:
+                            radii_34 = parse_radii(line)
+
+
+                # Extract minimum central pressure (if available)
+                mslp = 0  # Default value if not provided
+
+
+                
+            except (IndexError, ValueError):
+                print("error")
+                continue
+            
+            # Create a new track point
+            tp = TrackPoint()
+            tp.tau = timedelta_hours  # Use the calculated timedelta in hours
+            tp.lat = lat
+            tp.lon = lon
+            tp.vmax = vmax
+            tp.mslp = mslp
+            if radii_34 is not None:
+                tp.radii["34"] = radii_34
+            else:
+                pass
+            if radii_50 is not None:
+                tp.radii["50"] = radii_50
+            else:
+                pass
+            if radii_64 is not None:
+                tp.radii["64"] = radii_64
+            else:
+                pass
+
+
+            # Add track point to forecast
+            if current_forecast is None or current_forecast.DTG != forecast_datetime.strftime("%Y%m%d%H"):
+                current_forecast = Forecast()
+                current_forecast.DTG = forecast_datetime.strftime("%Y%m%d%H")  # Format DTG for output
+                fcst.append(current_forecast)
+                num_fcst += 1
+            
+            current_forecast.track.append(tp)
+        
+
+    # Write out updated ATCF file
+    with open(atfile, 'w') as atf:
+        # Write previous storm information
+        if previous_storm_point:
+            written_rows = set()
+            for wind_speed in ["34", "50", "64"]:
+                radii = previous_storm_point.radii[wind_speed]
+                # Debug: Print formatted lat and lon
+                formatted_lat = format_lat_lon(previous_storm_point.lat, True)
+                formatted_lon = format_lat_lon(previous_storm_point.lon, False)
+                # Skip writing the row if all radii values are zero
+                if all(value == 0 for value in radii.values()):
+                    if wind_speed in ["50", "64"]:
+                        continue
+                    line = (f"AL, {previous_storm_point.cyNum:2d}, {previous_storm_point.dtg},  1, OFCL,  {previous_storm_point.tau:2}, "
+                            f"{formatted_lat},  {formatted_lon:<2}, "
+                            f"{previous_storm_point.vmax:3d}, {previous_storm_point.mslp:4d}, \n")
+                else:
+                    # Create the row string with explicit spacing between lat and lon
+                    line = (f"AL, {previous_storm_point.cyNum:2d}, {previous_storm_point.dtg},  1, OFCL,  {previous_storm_point.tau:2}, "
+                            f"{formatted_lat},  {formatted_lon:<2}, "
+                            f"{previous_storm_point.vmax:3d}, {previous_storm_point.mslp:4d}, XX,  {wind_speed}, NEQ, "
+                            f" {radii['NE']:3d},  {radii['SE']:3d},  {radii['SW']:3d},  {radii['NW']:3d}, {storm_name.strip()}       , \n")
+                # Debug: Print the generated line
+                # Skip duplicate rows
+                if line in written_rows:
+                    continue
+                written_rows.add(line)
+                atf.write(line)
+
+
+        # Write current storm information
+        if current_storm:
+            written_rows = set()  # To track already written rows
+            for wind_speed in ["34", "50", "64"]:
+                radii = current_storm.radii[wind_speed]
+                # Debug: Print formatted lat and lon
+                formatted_lat = format_lat_lon(current_storm.lat, True)
+                formatted_lon = format_lat_lon(current_storm.lon, False)
+                # Skip writing the row if all radii values are zero
+                if all(value == 0 for value in radii.values()):
+                    if wind_speed in ["50", "64"]:
+                        continue
+                    line = (f"AL, {current_storm.cyNum:2d}, {previous_storm_point.dtg},  1, OFCL,  {current_storm.tau:2}, "
+                            f"{formatted_lat},  {formatted_lon:<2}, "
+                            f"{current_storm.vmax:3d}, {current_storm.mslp:4d}, \n")
+                else:                    
+                    # Create the row string with explicit spacing between lat and lon
+                    line = (f"AL, {current_storm.cyNum:2d}, {previous_storm_point.dtg},  1, OFCL,  {current_storm.tau:2}, "
+                            f"{formatted_lat},  {formatted_lon:<2}, "
+                            f"{current_storm.vmax:3d}, {current_storm.mslp:4d}, XX,  {wind_speed}, NEQ, "
+                            f" {radii['NE']:3d},  {radii['SE']:3d},  {radii['SW']:3d},  {radii['NW']:3d}, {storm_name.strip()}       , \n")
+                # Debug: Print the generated line
+                # Skip duplicate rows
+                if line in written_rows:
+                    continue
+                written_rows.add(line)
+                atf.write(line)
+
+
+
+        # Write forecast data
+        for forecast in fcst:
+            written_rows = set()  # To track already written rows
+            for tp in forecast.track:
+                for wind_speed in ["34", "50", "64"]:
+                    radii = tp.radii[wind_speed]
+                    # Debug: Print formatted lat and lon
+                    formatted_lat = format_lat_lon(tp.lat, True)
+                    formatted_lon = format_lat_lon(tp.lon, False)
+                    # Skip writing the row if all radii values are zero
+                    if all(value == 0 for value in radii.values()):
+                        if wind_speed in ["50", "64"]:
+                            continue
+                        line = (f"{forecast.basin}, {int(forecast.cyNum):2d}, {previous_storm_point.dtg},  1, {forecast.tech}, {tp.tau:3}, "
+                                f"{formatted_lat},  {formatted_lon:<2}, "
+                                f"{tp.vmax:3d}, {tp.mslp:4d}       \n")
+                    else:
+                        # Create the row string with explicit spacing between lat and lon
+                        line = (f"{forecast.basin}, {int(forecast.cyNum):2d}, {previous_storm_point.dtg},  1, {forecast.tech}, {tp.tau:3}, "
+                                f"{formatted_lat},  {formatted_lon:<2}, "
+                                f"{tp.vmax:3d}, {tp.mslp:4d}, XX,  {wind_speed}, NEQ, "
+                                f" {radii['NE']:3d},  {radii['SE']:3d},  {radii['SW']:3d},  {radii['NW']:3d}, {storm_name.strip()}       , \n")
+
+                    # Debug: Print the generated line
+                    # Skip duplicate rows
+                    if line in written_rows:
+                        continue
+                    written_rows.add(line)
+                    atf.write(line)
+
+
+# Example usage in the main program
 def main():
-    parser = TPCAdvisoryParser()
-    
-    # Parse command line arguments
-    import sys
-    args = sys.argv[1:]
-    
-    for i, arg in enumerate(args):
-        if arg.startswith("-in"):
-            if i + 1 < len(args):
-                parser.infile = args[i+1]
-    
-    # Check if input file exists
-    if not os.path.exists(parser.infile):
-        print(f"*Error* {parser.infile} does not exist!")
-        return
-    
-    # Read input file and process messages
-    with open(parser.infile, 'r') as fin:
-        for line in fin:
-            parser.inbuffy = line.strip()
-            
-            # NHC Atlantic
-            if line.startswith("WTNT2"):
-                parser.parse_nhc_marine()
-            if line.startswith("WTNT3"):
-                parser.parse_nhc_public()
-            if line.startswith("WTNT4"):
-                parser.parse_nhc_discuss()
-            if line.startswith("WTNT8"):
-                parser.parse_nhc_watch()
-            
-            # NHC East Pacific
-            if line.startswith("WTPZ2"):
-                parser.parse_nhc_marine()
-            if line.startswith("WTPZ3"):
-                parser.parse_nhc_public()
-            if line.startswith("WTPZ4"):
-                parser.parse_nhc_discuss()
-            
-            # CPHC Central Pacific
-            if line.startswith("WTPA2"):
-                parser.parse_nhc_marine()
-            if line.startswith("WTPA3"):
-                parser.parse_nhc_public()
-            if line.startswith("WTPA4"):
-                parser.parse_nhc_discuss()
+    """Main program"""
+    if infile is None:
+        print("Error: '-in' argument is required")
+        sys.exit(1)
+
+    parse_nhc_marine()
+
 
 if __name__ == "__main__":
-    print("\nTPC Marine Advisory to ATCF Track File Version 4.0")
-    # Would include build info and copyright here
     main()
