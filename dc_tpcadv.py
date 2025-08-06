@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 from typing import List, Dict
 import sys
 
+# Example to how run file
+# python3 dc_tpcadv.py -in NHC_message.dat
 
 # Initialize variables
 infile = None
