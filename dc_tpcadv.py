@@ -417,13 +417,13 @@ def parse_nhc_marine():
                         continue
                     line = (f"AL, {previous_storm_point.cyNum:2d}, {previous_storm_point.dtg},  1, OFCL,  {previous_storm_point.tau:2}, "
                             f"{formatted_lat},  {formatted_lon:<2}, "
-                            f"{previous_storm_point.vmax:3d}, {previous_storm_point.mslp:4d}, \n")
+                            f"{previous_storm_point.vmax:3d}, {previous_storm_point.mslp:4d}  \n")
                 else:
                     # Create the row string with explicit spacing between lat and lon
                     line = (f"AL, {previous_storm_point.cyNum:2d}, {previous_storm_point.dtg},  1, OFCL,  {previous_storm_point.tau:2}, "
                             f"{formatted_lat},  {formatted_lon:<2}, "
                             f"{previous_storm_point.vmax:3d}, {previous_storm_point.mslp:4d}, XX,  {wind_speed}, NEQ, "
-                            f" {radii['NE']:3d},  {radii['SE']:3d},  {radii['SW']:3d},  {radii['NW']:3d}, {storm_name.strip()}       , \n")
+                            f" {radii['NE']:3d},  {radii['SE']:3d},  {radii['SW']:3d},  {radii['NW']:3d}, ,   , , , , , ,      {storm_name.strip()}       , \n")
                 # Debug: Print the generated line
                 # Skip duplicate rows
                 if line in written_rows:
@@ -446,13 +446,13 @@ def parse_nhc_marine():
                         continue
                     line = (f"AL, {current_storm.cyNum:2d}, {previous_storm_point.dtg},  1, OFCL,  {current_storm.tau:2}, "
                             f"{formatted_lat},  {formatted_lon:<2}, "
-                            f"{current_storm.vmax:3d}, {current_storm.mslp:4d}, \n")
+                            f"{current_storm.vmax:3d}, {current_storm.mslp:4d}  \n")
                 else:                    
                     # Create the row string with explicit spacing between lat and lon
                     line = (f"AL, {current_storm.cyNum:2d}, {previous_storm_point.dtg},  1, OFCL,  {current_storm.tau:2}, "
                             f"{formatted_lat},  {formatted_lon:<2}, "
                             f"{current_storm.vmax:3d}, {current_storm.mslp:4d}, XX,  {wind_speed}, NEQ, "
-                            f" {radii['NE']:3d},  {radii['SE']:3d},  {radii['SW']:3d},  {radii['NW']:3d}, {storm_name.strip()}       , \n")
+                            f" {radii['NE']:3d},  {radii['SE']:3d},  {radii['SW']:3d},  {radii['NW']:3d}, ,   , , , , , ,      {storm_name.strip()}       , \n")
                 # Debug: Print the generated line
                 # Skip duplicate rows
                 if line in written_rows:
@@ -477,13 +477,13 @@ def parse_nhc_marine():
                             continue
                         line = (f"{forecast.basin}, {int(forecast.cyNum):2d}, {previous_storm_point.dtg},  1, {forecast.tech}, {tp.tau:3}, "
                                 f"{formatted_lat},  {formatted_lon:<2}, "
-                                f"{tp.vmax:3d}, {tp.mslp:4d}       \n")
+                                f"{tp.vmax:3d}, {tp.mslp:4d}  \n")
                     else:
                         # Create the row string with explicit spacing between lat and lon
                         line = (f"{forecast.basin}, {int(forecast.cyNum):2d}, {previous_storm_point.dtg},  1, {forecast.tech}, {tp.tau:3}, "
                                 f"{formatted_lat},  {formatted_lon:<2}, "
                                 f"{tp.vmax:3d}, {tp.mslp:4d}, XX,  {wind_speed}, NEQ, "
-                                f" {radii['NE']:3d},  {radii['SE']:3d},  {radii['SW']:3d},  {radii['NW']:3d}, {storm_name.strip()}       , \n")
+                                f" {radii['NE']:3d},  {radii['SE']:3d},  {radii['SW']:3d},  {radii['NW']:3d}, ,   , , , , , ,      {storm_name.strip()}       , \n")
 
                     # Debug: Print the generated line
                     # Skip duplicate rows
