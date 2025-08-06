@@ -5,6 +5,9 @@ from eccodes import *
 from datetime import datetime
 import math
 
+# Example of how to run file
+# python3 dc_ecmwf.py -in ECMWF_message.bufr
+
 # Constants
 MAX_STRSIZE = 200
 NM2M = 1852.0  # Nautical miles to meters
@@ -13,8 +16,6 @@ CODES_MISSING_DOUBLE = 1.0e100
 CODES_MISSING_LONG = 2147483647
 
 
-# Path to your ECMWF BUFR tropical cyclone file
-#bufr_file = "20240701120000-240h-oper-tf.bufr"
 
 
 class ForecastTrack:
