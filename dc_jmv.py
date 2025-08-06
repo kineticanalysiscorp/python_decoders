@@ -2,8 +2,11 @@ import re
 import sys
 from datetime import datetime, timedelta
 
+# "Usage: python3 dc_jtwc.py <input_file> [output_file]"
+# "If output_file is not provided, it will be auto-generated based on storm information"
 
-def parse_and_convert_to_atcf(input_file, output_file):
+
+def parse_and_convert_to_atcf(input_file, output_file=None):
     """
     Parses a text file with tropical cyclone warnings and forecasts
     and converts it into a modified ATCF format.
@@ -12,14 +15,46 @@ def parse_and_convert_to_atcf(input_file, output_file):
         data = file.read()
 
     # Extract the cyclone name and warning number
-    subj_match = re.search(r"SUBJ/TROPICAL CYCLONE (\d+[A-Z]) \(([\w\s]+)\) WARNING NR (\d+)", data)
+    subj_match = re.search(r"SUBJ[:/]\s*TROPICAL CYCLONE\s+(\d+[A-Z])\s+\(([\w\s]+)\)\s+WARNING NR\s+(\d+)", data)
     if not subj_match:
         print("Error: Unable to extract cyclone name or warning number.")
+        print("Looking for pattern like: SUBJ: TROPICAL CYCLONE 11S (ELEVEN) WARNING NR 005")
         return
 
     cyclone_id, cyclone_name, warning_number = subj_match.groups()
     cyclone_name = cyclone_name.strip().upper()
-    cyclone_id = cyclone_id[:-1]
+    storm_number = cyclone_id[:-1]  # Extract just the number part
+    
+    # Extract year from the date line (e.g., "28FEB25" -> "25" -> "2025")
+    date_match = re.search(r"\d{2}[A-Z]{3}(\d{2})", data)
+    if date_match:
+        year_suffix = date_match.group(1)
+        # Convert 2-digit year to 4-digit year
+        if int(year_suffix) > 50:  # Assume 1950-1999 for years > 50
+            full_year = f"19{year_suffix}"
+        else:  # Assume 2000-2049 for years <= 50
+            full_year = f"20{year_suffix}"
+    else:
+        full_year = str(datetime.now().year)  # fallback to current year
+    
+    # Determine basin from the message content
+    if "SOUTHPAC" in data or "SOUTH PACIFIC" in data:
+        basin = "SH"
+    elif "SOUTHIO" in data or "SOUTH INDIAN" in data:
+        basin = "SH"  # South Indian Ocean also uses SH basin code
+    elif "WESTPAC" in data or "WEST PACIFIC" in data:
+        basin = "WP"
+    elif "NORTH INDIAN" in data or "NORTHINDIAN" in data:
+        basin = "NI"
+    else:
+        basin = "SH"  # default fallback
+    
+    # Generate output filename if not provided
+    if output_file is None:
+        output_file = f"{basin}{storm_number.zfill(2)}{full_year}.DAT"
+        print(f"Auto-generated output filename: {output_file}")
+
+    cyclone_id = storm_number  # Use just the number part for ATCF
 
     # Extract central pressure (MSLP)
     central_pressure_match = re.search(r"MINIMUM CENTRAL PRESSURE AT \d{6}Z IS (\d+) MB", data)
@@ -43,10 +78,12 @@ def parse_and_convert_to_atcf(input_file, output_file):
     lat_float = float(lat_deg)
     if (lon_dir == 'E' and 100 <= lon_float <= 180 and lat_dir == "N"):
         BASIN = "WP"
-    if (lon_dir == 'E' and 20 <= lon_float <= 100 and lat_dir == "N"):
+    elif (lon_dir == 'E' and 20 <= lon_float <= 100 and lat_dir == "N"):
         BASIN = "NI"
-    if (lat_dir == "S"):
+    elif (lat_dir == "S"):
         BASIN = "SH"
+    else:
+        BASIN = basin  # Use the basin determined from message content
 
     # Extract wind radii for the warning
     wind_radii = extract_wind_radii(data, warning_time)
@@ -56,6 +93,7 @@ def parse_and_convert_to_atcf(input_file, output_file):
         r"(\d{6}Z) --- NEAR (\d+\.\d)([NS]) (\d+\.\d)([EW])", data, re.DOTALL))
     warning = re.findall(r"MAX SUSTAINED WINDS - (\d+) KT, GUSTS (\d+)", data, )[0]
     warning_wind = warning[0]
+    print(warning_wind)
     warning = warning_test[0] + warning   # concatenate so it is same as forecasts
 
     # Prepare the ATCF lines for the warning
@@ -155,7 +193,7 @@ def generate_atcf_lines(BASIN, cyclone_id, cyclone_name, time, lat, lon, wind, f
                 #line = f"{cyclone_id},{time},{lat},{lon},{wind_speed},{','.join(filtered_radii)},{cyclone_name}\n"
                 formatted_lead = f"{int(lead):3}"
                 formatted_radii = ", ".join(f"{int(r):>4}" for r in filtered_radii)
-                line = f"{BASIN}, {cyclone_id}, {time},  1, JTWC, {int(lead):>3},{lat},{lon},  {wind[1:]},    0,   ,  {wind_speed[1:]}, AAA, {''.join(formatted_radii)}, , , , , , , , , , , {cyclone_name}, ,\n"
+                line = f"{BASIN}, {cyclone_id}, {time},  1, JTWC, {int(lead):>3},{lat},{lon}, {int(wind):>3},    0,   ,  {wind_speed[1:]}, AAA, {''.join(formatted_radii)}, , , , , , , , , , , {cyclone_name}, ,\n"
                 print(filtered_radii)
                 atcf_lines.append(line)
                 radii_written = True
@@ -163,7 +201,7 @@ def generate_atcf_lines(BASIN, cyclone_id, cyclone_name, time, lat, lon, wind, f
         # If no radii were written, add a placeholder line
         if not "filtered_radii" in locals() and count == 0:
             formatted_lead = f"{int(lead):3}"
-            line = f"{BASIN}, {cyclone_id}, {time},  1, JTWC, {int(lead):>3},{lat},{lon},  {wind[1:]},    0,   ,  , , ,  , , , , , , , , , , , {cyclone_name}, ,\n"
+            line = f"{BASIN}, {cyclone_id}, {time},  1, JTWC, {int(lead):>3},{lat},{lon}, {int(wind):>3},    0,   ,  , , ,  , , , , , , , , , , , {cyclone_name}, ,\n"
             count = count + 1
             atcf_lines.append(line)
 
@@ -187,13 +225,16 @@ def extend_tuples_with_integer(list_of_tuples, integers):
 
 if __name__ == "__main__":
     # Ensure proper usage
-    if len(sys.argv) != 3:
-        print("Usage: python atcf_format_converter.py <input_file> <output_file>")
+    if len(sys.argv) < 2 or len(sys.argv) > 3:
+        print("Usage: python3 dc_jtwc.py <input_file> [output_file]")
+        print("If output_file is not provided, it will be auto-generated based on storm information")
         sys.exit(1)
 
-    # Get input and output file paths from the command line
+    # Get input file path from the command line
     input_file = sys.argv[1]
-    output_file = sys.argv[2]
+    
+    # Get output file path if provided, otherwise let the function auto-generate it
+    output_file = sys.argv[2] if len(sys.argv) == 3 else None
 
     # Run the parser and converter
     atcf_data = parse_and_convert_to_atcf(input_file, output_file)
