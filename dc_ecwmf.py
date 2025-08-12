@@ -152,7 +152,7 @@ class ATCFDecoder:
             #mrd = f"{int(mrd):2d}"  # Ensure mrd is 2 characters wide
             tau = f"{int(0):3d}"  # Format tau as a 3-character wide field
 
-            line = (f"{fcst.basin},  {int(fcst.cyNum)}, {fcst.DTG},  1, OFCL, "
+            line = (f"{fcst.basin},  {int(fcst.cyNum)}, {fcst.DTG},  1, ECMF, "
                     f"{tau}, {lat},  {lon},  "
                     f"{vmax}, {mslp},    ,  , , ,  , , , , ,   , , , , , , {fcst.stormname}")
             f.write(line + '\n') 
@@ -177,7 +177,7 @@ class ATCFDecoder:
                 mrd = f"{int(track['mrd']):2d}"  # Ensure mrd is 2 characters wide
                 tau = f"{int(track['tau']):3d}"  # Format tau as a 3-character wide field
 
-                line =  (f"{fcst.basin},  {int(fcst.cyNum)}, {fcst.DTG},  1, OFCL, "
+                line =  (f"{fcst.basin},  {int(fcst.cyNum)}, {fcst.DTG},  1, ECMF, "
                         f"{tau}, {lat},  {lon},  "
                         f"{vmax}, {mslp}, "
                         f"   ,  , , ,  , , , , , {mrd}, , , , , , {fcst.stormname}")
